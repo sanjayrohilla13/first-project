@@ -2,15 +2,15 @@
 # DOWNLOAD CONFIG: ~5 years of NIFTY FUTURES, hourly candles, with real volume and open interest (Zerodha Kite)
 #
 #   python download_data.py --login                                                   # once per day
-#   python download_data.py --config config_download_5y_futures.yaml --only underlying
+#   python download_data.py --config configurations/config_download_5y_futures.yaml --only underlying
 #
 # Why Kite and not Dhan: Dhan's intraday charts only serve currently-active contracts (expired futures
 # are removed from its security master), so a 5-year hourly futures series cannot be built from Dhan.
 # Kite's historical API can return a stitched "continuous" series that includes expired months.
 # It needs KITE_API_KEY / KITE_API_SECRET in the environment and the Kite Connect Historical Data add-on.
 #
-# Writes data/nifty_fut_1h.csv (datetime, open, high, low, close, volume, oi). The options file is not touched.
-# Then run:  python strategy.py --config config_cmo_oi_fut.yaml
+# Writes data_hourly/nifty_fut_1h.csv (datetime, open, high, low, close, volume, oi). The options file is not touched.
+# Then run:  python strategy.py --config configurations/config_cmo_oi_fut.yaml
 #
 # Note: the stitched series is NOT back-adjusted, so each monthly roll leaves a small price gap
 # (the futures basis, typically 0.1-0.5%). It is a minor distortion for CMO/ATR once a month.
@@ -19,7 +19,7 @@
 data:
   days: 1800                   # ~4.9 years
   source: "zerodha"            # NIFTY continuous futures from Kite
-  output_csv: "data/nifty_fut_1h.csv"
+  output_csv: "data_hourly/nifty_fut_1h.csv"
 
 zerodha:
   underlying: "NIFTY"          # futures name on NFO

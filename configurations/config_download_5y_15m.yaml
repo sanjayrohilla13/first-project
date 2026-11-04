@@ -1,15 +1,15 @@
 # =========================================================
 # DOWNLOAD CONFIG: ~5 years of Nifty WEEKLY options, 15-minute candles (Dhan)
 #
-#   python download_data.py --config config_download_5y_15m.yaml --only underlying   # ~44 requests, a minute or two
-#   python download_data.py --config config_download_5y_15m.yaml --only options      # the long one
+#   python download_data.py --config configurations/config_download_5y_15m.yaml --only underlying   # ~44 requests, a minute or two
+#   python download_data.py --config configurations/config_download_5y_15m.yaml --only options      # the long one
 #   (or just leave off --only to do both, underlying first)
 #
 # Needs DHAN_ACCESS_TOKEN (and DHAN_CLIENT_ID) in the environment, like the other runs.
 # Finished strike/side pairs are saved in data/options_15m/dhan_parts, so you can stop
 # (Ctrl+C) and re-run the same command to resume. Rebuild the combined CSV from the
 # saved parts any time (no network needed) with:
-#   python download_data.py --config config_download_5y_15m.yaml --assemble
+#   python download_data.py --config configurations/config_download_5y_15m.yaml --assemble
 #
 # This file only holds what the downloader reads. It is not a strategy config.
 # =========================================================

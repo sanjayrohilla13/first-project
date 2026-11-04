@@ -1,4 +1,3 @@
-# CMO(14) +-50 adaptive experiment (copy of config.yaml with 4 changes)
 # =========================================================
 # NIFTY HOURLY STRATEGY CONFIG
 # VWAP + ADX + RSI + Open Interest
@@ -7,7 +6,7 @@
 data:
   source: "yfinance"           # underlying prices: "yfinance" or "zerodha" (futures)
   days: 730                    # history length for dhan / zerodha
-  output_csv: "data/nifty_1h.csv"
+  output_csv: "data_hourly/nifty_1h.csv"
   # --- yfinance-only settings ---
   symbol: "^NSEI"
   interval: "1h"
@@ -23,7 +22,7 @@ data:
 # open, high, low, close, volume, oi, iv.
 dhan:
   enabled: true                # also download the options file
-  output_csv: "data/nifty_options_1h.csv"
+  output_csv: "data_hourly/nifty_options_1h.csv"
   exchange_segment: "NSE_FNO"
   instrument: "OPTIDX"
   security_id: 13              # NIFTY 50 underlying id (see Dhan instrument list)
@@ -69,8 +68,8 @@ indicators:
   # in between = neutral. Use via direction.logic "cmo", or add `cmo` to direction.trend_use.
   cmo:
     period: 14
-    bull: 50                   # classic overbought level (25 was no better than random)
-    bear: -50
+    bull: 25
+    bear: -25
 
   # Call-vs-put OI flow from the Dhan options file. For every strike present in
   # two consecutive bars the OI change is summed per side. Put OI building faster
@@ -92,8 +91,10 @@ indicators:
 #   contrarian  - fade the slow trend. Backtests showed the trend rules have no edge (correlation with
 #                 the move to the close ~0 or negative) while fading it had a small, stable one (~+0.07)
 direction:
-  logic: "cmo"                 # Chande Momentum Oscillator decides the direction
+  logic: "contrarian"          # trend | rsi | cmo | contrarian
   trend_use: [vwap, adx, di, rsi, oi]   # logic "trend": which indicators must ALL agree (vwap adx di rsi oi cmo)
+  cmo_use_oi: false            # logic "cmo": also require the call-vs-put OI flow to agree (indicators.oi.*)
+  on_conflict: "neutral"       # CMO and OI disagree: "neutral" (treat as quiet market) or "skip" (no trade)
   rsi_bull: 50                 # logic "rsi": RSI above this = bullish
   rsi_bear: 40                 # logic "rsi": RSI below this = bearish
   threshold: 1.0               # |score| above this = bullish/bearish call, otherwise neutral
@@ -128,7 +129,7 @@ spread:
   #   condor      - iron condor every time (put spread + call spread), no direction call
   #   directional - bullish: put credit spread; bearish: call credit spread (uses the signals)
   #   adaptive    - directional when there is a signal, condor when the market is quiet
-  structure: "adaptive"        # CMO extreme -> directional spread; otherwise condor (if ADX <= 25)
+  structure: "condor"          # set to "adaptive" to trade the direction call (see the direction: section)
   short_selection: "otm_premium"  # which option to SELL: otm_premium | itm_premium | oi_wall
   short_premium: [35, 60]      # pick the strike whose premium is nearest the middle of this band (Rs)
   short_tolerance: 10          # ...accepting up to this much outside the band
@@ -151,7 +152,7 @@ spread:
 
 session:
   start: "09:15"
-  end: "14:30"
+  end: "15:25"
   exit_eod: false              # false = hold overnight (true = force-flat when the session ends)
   overnight: "always"          # when holding overnight (exit_eod false): "always", or "winners" = only carry
                                #   trades that are in profit at the last bar of the day (credit spreads/condors)
@@ -161,9 +162,10 @@ session:
 
 backtest:
   initial_capital: 1000000
-  position_sizing: "risk_pct"  # "risk_pct" or "fixed_lots"
+  position_sizing: "risk_pct"  # "risk_pct" | "fixed_lots" | "fixed_qty" (uses quantity)
   risk_pct: 1.0                # % of equity risked (premium SL distance) per trade
   lots: 1                      # used if fixed_lots
+  quantity: 150                # units per trade if fixed_qty; must be a multiple of lot_size (150 = 2 lots of 75)
   lot_size: 75                 # Nifty lot size; it changed over time, verify for your period
   slippage_bps: 5
   costs_bps: 3
@@ -177,4 +179,39 @@ optimize:
     tp_pct:        [20, 30, 50]
     adx_threshold: [20, 25, 30]
   sort_by: "avg_r"             # metric to rank results
-  output_csv: "results/optimization_cmo.csv"
+  output_csv: "results/optimization.csv"
+
+# Filters that veto DIRECTIONAL calls (found by studying where the calls failed; see the trades analysis).
+# A vetoed call means no trade, not a condor.
+direction_filters:
+  enabled: false
+  ema_fast: 20
+  ema_slow: 50
+  no_bullish_in_downtrend: true     # no bullish call while EMA fast < EMA slow
+  no_bearish_in_uptrend: false      # (bearish calls did not show this weakness)
+  max_abs_oi_bias_bullish: 0.8      # no bullish call when OI bias is above this (one-sided = crowded)
+  max_abs_oi_bias_bearish: null     # same for bearish (OI bias below minus this); null = off
+  max_atr_pct: 0.45                 # no directional call when ATR is above this % of price
+  cooldown_after_sl: "same_direction"  # after a stop-out, no new call in that direction that day ("any" or false)
+
+# Volume / OBV filter (a volatility filter, not a direction signal). A "flag" means the market is NOT quiet:
+#   surge    - relative volume (vs the same time of day, last 20 days), averaged over surge_bars, >= surge_ratio
+#   pressure - |OBV pressure| >= pressure_max, where pressure = signed volume / total volume over pressure_bars
+#              (-1..+1; near +-1 = every bar's volume on one side = a one-way market)
+# Uses the NIFTYBEES ETF volume as the proxy for index volume.
+volume_filter:
+  enabled: false
+  triggers: [surge]            # any of: surge, pressure
+  surge_ratio: 1.8
+  surge_bars: 3
+  pressure_bars: 14
+  pressure_max: 0.5
+  skip_condor_entry: true      # no new iron condor while flagged
+  skip_directional_entry: false  # also skip credit-spread entries while flagged
+  exit_condor_on_flag: true    # close an open condor at the next open when flagged ("VolSurge" exit)
+
+# HTML report written after each run (results/report.html)
+report:
+  html: "results/report.html"
+  open: true                   # open it in the browser when the run finishes
+  ema: [10, 20]                # EMA spans drawn on the Nifty chart (1 to 4 values)

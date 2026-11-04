@@ -21,19 +21,20 @@ If the Dhan token is missing or expired, Kite Connect takes over (dhan.kite_fall
 turns this off). The underlying is fully replaced: Nifty index + NIFTYBEES volume, the same
 series Dhan gives. Options are only topped up, because Kite does not serve expired contracts:
 just the days after the saved Dhan data that belong to the live weekly expiry (no IV). Those
-rows live in data/kite_parts, separate from dhan_parts, and Dhan's replace them once it works.
+rows live in data_hourly/kite_parts, separate from dhan_parts, and Dhan's replace them once it works.
 
-Credentials come from environment variables (never from config.yaml):
+Credentials come from environment variables (never from configurations/config.yaml):
     KITE_API_KEY, KITE_API_SECRET, KITE_ACCESS_TOKEN (optional, see --login)
     DHAN_ACCESS_TOKEN, DHAN_CLIENT_ID (optional)
 
 Usage:
     python download_data.py --login                  # once per day: get a Kite token
-    python download_data.py --config config.yaml     # underlying + options
+    python download_data.py --config configurations/config.yaml     # underlying + options
     python download_data.py --only options           # just the Dhan options
     python download_data.py --probe                  # debug Dhan request parameters
     python download_data.py --assemble               # build options CSV from saved parts
-    python download_data.py --config config_download_5y_daily.yaml --only daily   # daily candles
+    python download_data.py --config configurations/config_download_5y_daily.yaml --only daily   # daily candles
+    python download_data.py --config configurations/config_download_minute.yaml --only futures   # 1-minute (data_minute/)
 
 Daily Nifty candles (--only daily) are set up in the config's `daily` section (years, source,
 output_csv) and go to their own folder, apart from the hourly data.
@@ -547,6 +548,23 @@ def _fetch_daily(session, spec: dict, windows: list, label: str) -> pd.DataFrame
     return out[~out.index.duplicated(keep="last")].sort_index()
 
 
+def _fetch_daily_from_intraday(session, spec: dict, start, end, label: str) -> pd.DataFrame:
+    """Daily candles built from 60-minute bars, for when Dhan's /charts/historical endpoint
+    rejects every request (DH-905). Open of the first bar, high/low of the day, close of the last
+    bar, volume summed."""
+    windows, cur = [], start
+    while cur <= end:
+        to = min(cur + timedelta(days=84), end)  # Dhan allows at most 90 days per intraday request
+        windows.append((cur, to))
+        cur = to + timedelta(days=1)
+    bars = _fetch_intraday(session, spec, 60, windows, label)
+    day = bars.index.normalize()
+    out = bars.groupby(day).agg(open=("open", "first"), high=("high", "max"), low=("low", "min"),
+                                close=("close", "last"), volume=("volume", "sum"))
+    out.index.name = "datetime"
+    return out
+
+
 def download_daily(cfg: dict) -> pd.DataFrame:
     """Daily Nifty candles for daily.years years, from Dhan (volume of a proxy symbol, as for the
     hourly series) or from yfinance."""
@@ -564,9 +582,16 @@ def download_daily(cfg: dict) -> pd.DataFrame:
             windows.append((cur, to))
             cur = to + timedelta(days=1)
         log.info(f"Dhan daily: {start} -> {end}, {len(windows)} windows per series")
-        px = _fetch_daily(session, d["price"], windows, "Nifty index")
+        try:
+            px = _fetch_daily(session, d["price"], windows, "Nifty index")
+            fetch = lambda spec, label: _fetch_daily(session, spec, windows, label)
+        except RuntimeError as e:
+            log.warning(f"{e} Dhan's daily endpoint is not usable; building daily candles from "
+                        f"60-minute bars instead.")
+            fetch = lambda spec, label: _fetch_daily_from_intraday(session, spec, start, end, label)
+            px = fetch(d["price"], "Nifty index")
         if d.get("volume"):
-            vol = _fetch_daily(session, d["volume"], windows, "volume proxy")["volume"]
+            vol = fetch(d["volume"], "volume proxy")["volume"]
             px["volume"] = vol.reindex(px.index)
             missing = int(px["volume"].isna().sum())
             if missing:
@@ -1014,6 +1039,15 @@ def _save_options(df: pd.DataFrame, cfg: dict) -> None:
 
 
 # ──────────────────────────────── Main ──────────────────────────────────
+CONFIG_DIR = Path(__file__).resolve().parent / "configurations"
+
+
+def resolve_config(path: str) -> str:
+    """Use the path as given if it exists, else look for it in the configurations/ folder."""
+    p = Path(path)
+    return str(p) if p.exists() else str(CONFIG_DIR / p.name)
+
+
 def main(config_path: str, only: str | None = None) -> None:
     with open(config_path) as f:
         cfg = yaml.safe_load(f)
@@ -1025,7 +1059,13 @@ def main(config_path: str, only: str | None = None) -> None:
         build_daily_options(cfg)
         return
 
-    if only in (None, "underlying"):
+    if only == "futures":
+        # Nifty futures from Kite, written to the config's futures section (own file, own days)
+        if "futures" not in cfg:
+            raise SystemExit("This config has no 'futures' section (output_csv, days).")
+        cfg = {**cfg, "data": {**cfg["data"], **cfg["futures"], "source": "zerodha"}}
+
+    if only in (None, "underlying", "futures"):
         source = cfg["data"].get("source", "yfinance")
         if source == "dhan":
             try:
@@ -1048,6 +1088,14 @@ def main(config_path: str, only: str | None = None) -> None:
         if out.exists() and not backup.exists():  # keep the file this one replaces, once
             shutil.copy2(out, backup)
             log.info(f"Kept the previous {out.name} as {backup.name}")
+        if cfg["data"].get("merge_existing") and out.exists():
+            # Top-up mode: keep bars saved by earlier runs (a short days window slides forward),
+            # new downloads win where they overlap.
+            old = pd.read_csv(out, parse_dates=["datetime"], index_col="datetime")
+            old.index = pd.to_datetime(old.index, utc=True).tz_convert(IST)
+            df = pd.concat([old[old.columns.intersection(df.columns)], df])
+            df = df[~df.index.duplicated(keep="last")].sort_index()
+            log.info(f"Merged with {len(old)} bars already saved in {out.name}")
         df.to_csv(out)
         log.info(f"Saved {len(df)} rows -> {out}")
         if "oi" in df.columns:
@@ -1059,17 +1107,18 @@ def main(config_path: str, only: str | None = None) -> None:
 
 if __name__ == "__main__":
     p = argparse.ArgumentParser()
-    p.add_argument("--config", default="config.yaml")
+    p.add_argument("--config", default="configurations/config.yaml")
     p.add_argument("--login", action="store_true",
                    help="Generate today's Kite access token and exit")
-    p.add_argument("--only", choices=["underlying", "options", "daily", "daily_options"],
-                   help="Download just one dataset (daily = daily Nifty candles; daily_options = daily "
+    p.add_argument("--only", choices=["underlying", "options", "futures", "daily", "daily_options"],
+                   help="Download just one dataset (futures = Kite futures into the config's futures section; daily = daily Nifty candles; daily_options = daily "
                         "option candles built from the hourly options file; see the daily config sections)")
     p.add_argument("--assemble", action="store_true",
                    help="Build the options CSV from saved dhan_parts (no download)")
     p.add_argument("--probe", action="store_true",
                    help="Test Dhan expiry flag/code combinations and exit")
     a = p.parse_args()
+    a.config = resolve_config(a.config)
     if a.login:
         kite_login()
     elif a.assemble:

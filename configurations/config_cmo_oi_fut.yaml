@@ -1,3 +1,4 @@
+# CMO(14) >= +25 = bullish, <= -25 = bearish AND call-vs-put OI flow must agree; adaptive; carries only winners overnight
 # =========================================================
 # NIFTY HOURLY STRATEGY CONFIG
 # VWAP + ADX + RSI + Open Interest
@@ -6,12 +7,12 @@
 data:
   source: "yfinance"           # underlying prices: "yfinance" or "zerodha" (futures)
   days: 730                    # history length for dhan / zerodha
-  output_csv: "data/nifty_1h.csv"
+  output_csv: "data_hourly/nifty_fut_1h.csv"   # NIFTY futures (real volume), see configurations/config_download_5y_futures.yaml
   # --- yfinance-only settings ---
   symbol: "^NSEI"
   interval: "1h"
   period: "730d"               # yfinance max for 1h
-  volume_symbol: "NIFTYBEES.NS"  # volume proxy: the index itself has zero volume
+  volume_symbol: "NIFTYBEES.NS"  # (unused here: futures carry real volume)
   oi_csv: null                 # optional: path to CSV with datetime,oi columns
 
 # Credentials are read from env vars DHAN_ACCESS_TOKEN (and optional DHAN_CLIENT_ID).
@@ -22,7 +23,7 @@ data:
 # open, high, low, close, volume, oi, iv.
 dhan:
   enabled: true                # also download the options file
-  output_csv: "data/nifty_options_1h.csv"
+  output_csv: "data_hourly/nifty_options_1h.csv"
   exchange_segment: "NSE_FNO"
   instrument: "OPTIDX"
   security_id: 13              # NIFTY 50 underlying id (see Dhan instrument list)
@@ -64,12 +65,12 @@ indicators:
     short_min: 25
     short_max: 45
 
-  # Chande Momentum Oscillator (-100..+100). Above `bull` = positive bias, below `bear` = negative bias,
+  # Chande Momentum Oscillator (-100..+100). At or above `bull` = positive bias, at or below `bear` = negative bias,
   # in between = neutral. Use via direction.logic "cmo", or add `cmo` to direction.trend_use.
   cmo:
     period: 14
-    bull: 25
-    bear: -25
+    bull: 50              # CMO >= this = bullish (change here to tune)
+    bear: -50                  # CMO <= this = bearish
 
   # Call-vs-put OI flow from the Dhan options file. For every strike present in
   # two consecutive bars the OI change is summed per side. Put OI building faster
@@ -91,10 +92,10 @@ indicators:
 #   contrarian  - fade the slow trend. Backtests showed the trend rules have no edge (correlation with
 #                 the move to the close ~0 or negative) while fading it had a small, stable one (~+0.07)
 direction:
-  logic: "contrarian"          # trend | rsi | cmo | contrarian
+  logic: "cmo"                 # Chande Momentum Oscillator decides the direction
   trend_use: [vwap, adx, di, rsi, oi]   # logic "trend": which indicators must ALL agree (vwap adx di rsi oi cmo)
-  cmo_use_oi: false            # logic "cmo": also require the call-vs-put OI flow to agree (indicators.oi.*)
-  on_conflict: "neutral"       # CMO and OI disagree: "neutral" (treat as quiet market) or "skip" (no trade)
+  cmo_use_oi: true             # a CMO extreme only counts when the call-vs-put OI flow agrees
+  on_conflict: "skip"          # CMO and OI disagree -> stand aside (no trade)
   rsi_bull: 50                 # logic "rsi": RSI above this = bullish
   rsi_bear: 40                 # logic "rsi": RSI below this = bearish
   threshold: 1.0               # |score| above this = bullish/bearish call, otherwise neutral
@@ -129,7 +130,7 @@ spread:
   #   condor      - iron condor every time (put spread + call spread), no direction call
   #   directional - bullish: put credit spread; bearish: call credit spread (uses the signals)
   #   adaptive    - directional when there is a signal, condor when the market is quiet
-  structure: "condor"          # set to "adaptive" to trade the direction call (see the direction: section)
+  structure: "adaptive"        # CMO extreme -> directional spread; otherwise condor (if ADX <= 25)
   short_selection: "otm_premium"  # which option to SELL: otm_premium | itm_premium | oi_wall
   short_premium: [35, 60]      # pick the strike whose premium is nearest the middle of this band (Rs)
   short_tolerance: 10          # ...accepting up to this much outside the band
@@ -152,21 +153,21 @@ spread:
 
 session:
   start: "09:15"
-  end: "14:30"
+  end: "15:25"
   exit_eod: false              # false = hold overnight (true = force-flat when the session ends)
-  overnight: "always"          # when holding overnight (exit_eod false): "always", or "winners" = only carry
+  overnight: "winners"         # only carry trades that are already in clear profit at the last bar of the day
                                #   trades that are in profit at the last bar of the day (credit spreads/condors)
-  winner_min_pct: 0            # "winners": profit needed to count, as % of the entry credit
+  winner_min_pct: 15           # ...i.e. at least 15% of the entry credit earned (0-5% did worse than holding all)
   expiry_roll_ratio: 3.0       # an expiry is detected when the ATM straddle jumps by more than this at
                                #   the next open; positions are always closed on the last bar of expiry day
 
 backtest:
-  initial_capital: 1000000
-  position_sizing: "risk_pct"  # "risk_pct" | "fixed_lots" | "fixed_qty" (uses quantity)
+  initial_capital: 4000000
+  position_sizing: "fixed_qty"  # "risk_pct" | "fixed_lots" | "fixed_qty" (uses quantity)
   risk_pct: 1.0                # % of equity risked (premium SL distance) per trade
   lots: 1                      # used if fixed_lots
-  quantity: 150                # units per trade if fixed_qty; must be a multiple of lot_size (150 = 2 lots of 75)
-  lot_size: 75                 # Nifty lot size; it changed over time, verify for your period
+  quantity: 650                # units per trade if fixed_qty; must be a multiple of lot_size (650 = 10 lots of 65)
+  lot_size: 65                 # Nifty lot size; it changed over time, verify for your period
   slippage_bps: 5
   costs_bps: 3
 
@@ -179,17 +180,17 @@ optimize:
     tp_pct:        [20, 30, 50]
     adx_threshold: [20, 25, 30]
   sort_by: "avg_r"             # metric to rank results
-  output_csv: "results/optimization.csv"
+  output_csv: "results/optimization_cmo_oi.csv"
 
 # Filters that veto DIRECTIONAL calls (found by studying where the calls failed; see the trades analysis).
 # A vetoed call means no trade, not a condor.
 direction_filters:
-  enabled: false
+  enabled: true
   ema_fast: 20
   ema_slow: 50
   no_bullish_in_downtrend: true     # no bullish call while EMA fast < EMA slow
   no_bearish_in_uptrend: false      # (bearish calls did not show this weakness)
-  max_abs_oi_bias_bullish: 0.8      # no bullish call when OI bias is above this (one-sided = crowded)
+  max_abs_oi_bias_bullish: null     # no bullish call when OI bias is above this; null = off (tested: did not help)
   max_abs_oi_bias_bearish: null     # same for bearish (OI bias below minus this); null = off
   max_atr_pct: 0.45                 # no directional call when ATR is above this % of price
   cooldown_after_sl: "same_direction"  # after a stop-out, no new call in that direction that day ("any" or false)
@@ -200,7 +201,7 @@ direction_filters:
 #              (-1..+1; near +-1 = every bar's volume on one side = a one-way market)
 # Uses the NIFTYBEES ETF volume as the proxy for index volume.
 volume_filter:
-  enabled: false
+  enabled: true
   triggers: [surge]            # any of: surge, pressure
   surge_ratio: 1.8
   surge_bars: 3
@@ -212,6 +213,6 @@ volume_filter:
 
 # HTML report written after each run (results/report.html)
 report:
-  html: "results/report.html"
+  html: "results/report_fut.html"
   open: true                   # open it in the browser when the run finishes
-  ema: [10, 20]                # EMA spans drawn on the Nifty chart (1 to 4 values)
+  ema: []                # EMA spans drawn on the Nifty chart (1 to 4 values)

@@ -10,8 +10,10 @@ access_token*
 values.yaml
 
 # Market data and backtest output (large / proprietary)
-data/
+data_hourly/
 data_daily/
+data_minute/
+logs/
 results/
 *.csv
 *.parquet

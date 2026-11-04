@@ -1,5 +1,5 @@
 """
-Hourly Nifty backtest + grid-search optimizer
+Hourly / daily / minute Nifty backtest + grid-search optimizer
 Strategy: VWAP regime anchor  +  ADX trend gate  +  RSI momentum  +  call-vs-put OI flow
 Direction comes from the Nifty hourly signals. Two ways to trade it (options.mode):
   credit_spread - SELL options, always hedged with a long leg priced under hedge_max_premium
@@ -9,8 +9,8 @@ Direction comes from the Nifty hourly signals. Two ways to trade it (options.mod
 Prices come from the Dhan options file.
 
 Usage:
-    python strategy.py --config config.yaml             # single run
-    python strategy.py --config config.yaml --optimize  # grid search
+    python strategy.py --config configurations/config.yaml             # single run
+    python strategy.py --config configurations/config.yaml --optimize  # grid search
 """
 
 import argparse
@@ -47,7 +47,16 @@ def save_csv(df: pd.DataFrame, path, **kw) -> Path:
         return alt
 
 
-def load_config(path="config.yaml"):
+CONFIG_DIR = Path(__file__).resolve().parent / "configurations"
+
+
+def resolve_config(path: str) -> str:
+    """Use the path as given if it exists, else look for it in the configurations/ folder."""
+    p = Path(path)
+    return str(p) if p.exists() else str(CONFIG_DIR / p.name)
+
+
+def load_config(path="configurations/config.yaml"):
     with open(path) as f:
         return yaml.safe_load(f)
 
@@ -72,6 +81,42 @@ def resample(df: pd.DataFrame, timeframe: str | None) -> pd.DataFrame:
     if "oi" in df.columns:
         ohlc["oi"] = "last"
     return df.resample(timeframe, label="right", closed="right").agg(ohlc).dropna()
+
+
+def _tf_minutes(timeframe: str) -> int:
+    return int(pd.Timedelta(timeframe).total_seconds() // 60)
+
+
+def resample_bars(df: pd.DataFrame, timeframe: str) -> pd.DataFrame:
+    """Aggregate finer bars (e.g. 1-minute) into `timeframe` bars. Bars stay stamped at their START
+    (like the downloaded data) and buckets are anchored to the 09:15 open, so 5min gives 09:15, 09:20, ..."""
+    ohlc = {"open": "first", "high": "max", "low": "min", "close": "last", "volume": "sum"}
+    if "oi" in df.columns:
+        ohlc["oi"] = "last"
+    r = df.resample(timeframe, label="left", closed="left", offset="555min")  # 555 min = 09:15
+    return r.agg(ohlc).dropna(subset=["open"])
+
+
+def resample_options(opts: pd.DataFrame, timeframe: str) -> pd.DataFrame:
+    """Option bars aggregated the same way, per contract (option type + absolute strike).
+    spot, strike_offset, OI and IV come from the contract's last minute in the bucket, which is what is
+    known when the bar closes. If two strikes then claim the same offset (ATM moved inside the bucket,
+    the older reading loses), one row per bar/type/offset is kept."""
+    o = opts.sort_values("datetime")
+    o["_t"] = o["datetime"]
+    day0 = o["datetime"].dt.normalize()
+    mins = (o["datetime"] - day0).dt.total_seconds() // 60 - 555
+    step = _tf_minutes(timeframe)
+    o["datetime"] = day0 + pd.to_timedelta((mins // step) * step + 555, unit="min")
+    agg = {"open": "first", "high": "max", "low": "min", "close": "last", "volume": "sum",
+           "oi": "last", "iv": "last", "spot": "last", "strike_offset": "last", "_t": "last"}
+    for c in ("expiry_flag", "expiry_code"):
+        if c in o.columns:
+            agg[c] = "last"
+    out = o.groupby(["datetime", "option_type", "strike"], sort=False).agg(agg).reset_index()
+    out = (out.sort_values("_t").drop_duplicates(["datetime", "option_type", "strike_offset"], keep="last")
+           .drop(columns="_t").sort_values(["datetime", "option_type", "strike"]).reset_index(drop=True))
+    return out
 
 
 def load_options(path) -> pd.DataFrame:
@@ -440,7 +485,14 @@ def _is_daily(cfg: dict) -> bool:
 
 
 def _bars_per_day(cfg: dict) -> float:
-    return 1.0 if _is_daily(cfg) else float(cfg["backtest"].get("bars_per_day", 6.5))
+    if _is_daily(cfg):
+        return 1.0
+    if "bars_per_day" in cfg["backtest"]:
+        return float(cfg["backtest"]["bars_per_day"])
+    rs = cfg.get("resample") or {}
+    if rs.get("enabled"):  # 375 trading minutes a day (09:15-15:30)
+        return 375 / _tf_minutes(rs["timeframe"])
+    return 6.5
 
 
 def _in_session(ts: pd.Timestamp, cfg: dict) -> bool:
@@ -1226,9 +1278,13 @@ def main(config_path: str, run_opt: bool, open_report: bool = True) -> None:
     opt_path = Path(cfg["dhan"]["output_csv"])
     if not opt_path.exists():
         raise SystemExit(f"{opt_path} not found. Run: python download_data.py --only options")
-    if cfg["resample"]["enabled"]:
-        raise SystemExit("Resampling is not supported with the options file.")
     opts = load_options(opt_path)
+    if cfg["resample"]["enabled"]:  # e.g. 1-minute files traded on 5-minute bars (index and options alike)
+        tf = cfg["resample"]["timeframe"]
+        n_min, n_opt = len(df), len(opts)
+        df, opts = resample_bars(df, tf), resample_options(opts, tf)
+        log.info(f"Resampled to {tf} bars: index {n_min} -> {len(df)} bars, options {n_opt} -> {len(opts)} rows "
+                 f"({_bars_per_day(cfg):.0f} bars/day)")
     if "expiry_code" in opts.columns:  # the daily file can hold several expiries; the lookups need one contract per bar
         code = int(cfg["dhan"]["expiry_code"])
         opts = opts[opts["expiry_code"] == code].reset_index(drop=True)
@@ -1277,8 +1333,8 @@ def main(config_path: str, run_opt: bool, open_report: bool = True) -> None:
 
 if __name__ == "__main__":
     p = argparse.ArgumentParser()
-    p.add_argument("--config", default="config.yaml")
+    p.add_argument("--config", default="configurations/config.yaml")
     p.add_argument("--optimize", action="store_true")
     p.add_argument("--no-open", action="store_true", help="write results/report.html but do not open it")
     args = p.parse_args()
-    main(args.config, args.optimize, not args.no_open)
+    main(resolve_config(args.config), args.optimize, not args.no_open)

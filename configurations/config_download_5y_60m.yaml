@@ -1,20 +1,20 @@
 # =========================================================
 # DOWNLOAD CONFIG: ~5 years of Nifty WEEKLY options, 60-minute (hourly) candles (Dhan)
 #
-#   python download_data.py --config config_download_5y_60m.yaml --only underlying   # ~44 requests, a minute or two
-#   python download_data.py --config config_download_5y_60m.yaml --only options      # the long one
+#   python download_data.py --config configurations/config_download_5y_60m.yaml --only underlying   # ~44 requests, a minute or two
+#   python download_data.py --config configurations/config_download_5y_60m.yaml --only options      # the long one
 #   (or just leave off --only to do both, underlying first)
 #
 # Needs DHAN_ACCESS_TOKEN (and DHAN_CLIENT_ID) in the environment.
 #
-# It writes the same files the strategy already reads (data/nifty_options_1h.csv, parts in
-# data/dhan_parts). The strike/side files you already have (Oct 2024 - Oct 2026) are kept and
+# It writes the same files the strategy already reads (data_hourly/nifty_options_1h.csv, parts in
+# data_hourly/dhan_parts). The strike/side files you already have (Oct 2024 - Oct 2026) are kept and
 # only the OLDER dates (and anything after the last run) are fetched, so this adds about
 # 3 years of history instead of re-downloading everything.
 #
 # If you stop it (Ctrl+C), re-run the same command to resume. To rebuild the combined CSV
 # from what is saved so far, without downloading:
-#   python download_data.py --config config_download_5y_60m.yaml --assemble
+#   python download_data.py --config configurations/config_download_5y_60m.yaml --assemble
 #
 # This file only holds what the downloader reads. It is not a strategy config.
 # =========================================================
@@ -24,8 +24,8 @@ data:
                                #   makes the oldest requests fail, which aborts the run. Raise it only
                                #   if your account really returns data that far back.
   source: "dhan"               # underlying Nifty prices from Dhan's intraday charts (up to 5 years)
-  output_csv: "data/nifty_1h.csv"   # underlying prices file the strategy reads (the old one is kept once
-                               #   as data/nifty_1h_previous.csv)
+  output_csv: "data_hourly/nifty_1h.csv"   # underlying prices file the strategy reads (the old one is kept once
+                               #   as data_hourly/nifty_1h_previous.csv)
 
 # Underlying Nifty prices (candles for the indicators). Index volume does not exist, so the NIFTYBEES ETF's
 # volume is used as the VWAP weight. Only ~44 requests in total: Dhan allows 90 days per request.
@@ -43,7 +43,7 @@ dhan_underlying:
 
 dhan:
   enabled: true
-  output_csv: "data/nifty_options_1h.csv"
+  output_csv: "data_hourly/nifty_options_1h.csv"
   exchange_segment: "NSE_FNO"
   instrument: "OPTIDX"
   security_id: 13              # NIFTY 50

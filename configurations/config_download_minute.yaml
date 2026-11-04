@@ -1,0 +1,71 @@
+# =========================================================
+# DOWNLOAD CONFIG: 1-MINUTE candles for the Nifty index, Nifty weekly options and Nifty futures
+#
+#   python download_data.py --config config_download_minute.yaml --only underlying   # index (Dhan), a minute or two
+#   python download_data.py --config config_download_minute.yaml --only options      # weekly options (Dhan), the long one
+#   python download_data.py --config config_download_minute.yaml --only futures      # futures (Kite; run --login first)
+#   (or: python update_data.py --only minute [--futures])
+#
+# Everything is written to data_minute/, apart from the hourly (data_hourly/) and daily files:
+#   data_minute/nifty_1m.csv            index prices + NIFTYBEES volume proxy
+#   data_minute/nifty_options_1m.csv    options, same columns as the hourly options file
+#   data_minute/dhan_parts/             one resumable file per strike/side (like the hourly run)
+#   data_minute/nifty_fut_1m.csv        futures with volume and OI
+#
+# Size and time: a trading day has 375 one-minute bars. The options file is 42 series (ATM-10..+10,
+# CE and PE) x 375 bars = ~15,750 rows a day, so 90 days is ~1.4 million rows. Keep data.days modest and
+# let it grow by re-running: finished days are never fetched again (options parts, and the index and
+# futures files merge into what is already saved). Requests: ~42 x days/2 for the options.
+# Dhan serves 1-minute data only so far back, so if the first requests fail lower data.days.
+#
+# Needs DHAN_ACCESS_TOKEN / DHAN_CLIENT_ID (index, options) and KITE_API_KEY / KITE_API_SECRET (futures).
+# This file only holds what the downloader reads. It is not a strategy config.
+# =========================================================
+
+data:
+  days: 90                     # history to keep up to date; raise it to extend further back
+  source: "dhan"               # index prices from Dhan's intraday charts
+  output_csv: "data_minute/nifty_1m.csv"
+  merge_existing: true         # keep minutes saved by earlier runs; new downloads win on overlap
+
+dhan_underlying:
+  interval: 1                  # minutes; keep equal to dhan.interval below
+  chunk_days: 85               # days per request (Dhan's maximum is 90)
+  price:
+    security_id: 13            # NIFTY 50 index
+    exchange_segment: "IDX_I"
+    instrument: "INDEX"
+  volume:
+    security_id: 10576         # NIFTYBEES ETF (NSE): index volume does not exist, this is the VWAP weight
+    exchange_segment: "NSE_EQ"
+    instrument: "EQUITY"
+
+dhan:
+  enabled: true
+  kite_fallback: false         # Kite cannot serve expired contracts
+  output_csv: "data_minute/nifty_options_1m.csv"
+  exchange_segment: "NSE_FNO"
+  instrument: "OPTIDX"
+  security_id: 13              # NIFTY 50
+  expiry_flag: "WEEK"
+  expiry_code: 1               # 1 = nearest weekly (copy this file for expiry 2 and use ATM-3..+3)
+  interval: 1                  # 1-minute candles
+  strike_min: -10              # ATM-10 ... ATM+10 is the widest Dhan allows for the nearest expiry
+  strike_max: 10
+  chunk_days: 2                # Dhan's max per request (both dates inclusive)
+  sleep_sec: 0.25              # pause between requests (rate limit)
+  progress_every: 25
+
+# Futures: Kite continuous contract, 1-minute, with volume and open interest.
+# --only futures overlays this section on `data` and forces source "zerodha".
+futures:
+  days: 90
+  output_csv: "data_minute/nifty_fut_1m.csv"
+
+zerodha:
+  underlying: "NIFTY"
+  exchange: "NFO"
+  instrument_token: null       # null = auto front-month future
+  interval: "minute"
+  continuous: true             # stitched continuous contract
+  chunk_days: 60               # Kite caps 1-minute requests at 60 days

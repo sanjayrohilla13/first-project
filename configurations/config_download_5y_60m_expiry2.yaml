@@ -1,16 +1,16 @@
 # =========================================================
 # DOWNLOAD CONFIG: ~5 years of the NEXT-WEEK Nifty weekly expiry (expiry_code 2), 60-minute candles (Dhan)
 #
-#   python download_data.py --config config_download_5y_60m_expiry2.yaml --only options
+#   python download_data.py --config configurations/config_download_5y_60m_expiry2.yaml --only options
 #
-# Companion to config_download_5y_60m.yaml (which holds the nearest weekly, expiry_code 1). Needs
+# Companion to configurations/config_download_5y_60m.yaml (which holds the nearest weekly, expiry_code 1). Needs
 # DHAN_ACCESS_TOKEN / DHAN_CLIENT_ID. Dhan only serves ATM-3 .. ATM+3 for expiries other than the
 # nearest, so this is 7 strikes x 2 sides = 14 series: roughly 12,000 requests, about 2 hours.
-# Saved parts are keyed WEEK2_60m in data/dhan_parts, so nothing from the expiry-1 download is touched.
+# Saved parts are keyed WEEK2_60m in data_hourly/dhan_parts, so nothing from the expiry-1 download is touched.
 # Stop with Ctrl+C and re-run the same command to resume.
 #
 # Then build the daily file with both expiries:
-#   python download_data.py --config config_download_5y_daily.yaml --only daily_options
+#   python download_data.py --config configurations/config_download_5y_daily.yaml --only daily_options
 #
 # If the first requests all fail, Dhan may not serve that far back for expiry 2: lower data.days.
 # =========================================================
@@ -20,8 +20,8 @@ data:
                                #   makes the oldest requests fail, which aborts the run. Raise it only
                                #   if your account really returns data that far back.
   source: "dhan"               # underlying Nifty prices from Dhan's intraday charts (up to 5 years)
-  output_csv: "data/nifty_1h.csv"   # underlying prices file the strategy reads (the old one is kept once
-                               #   as data/nifty_1h_previous.csv)
+  output_csv: "data_hourly/nifty_1h.csv"   # underlying prices file the strategy reads (the old one is kept once
+                               #   as data_hourly/nifty_1h_previous.csv)
 
 # Underlying Nifty prices (candles for the indicators). Index volume does not exist, so the NIFTYBEES ETF's
 # volume is used as the VWAP weight. Only ~44 requests in total: Dhan allows 90 days per request.
@@ -40,7 +40,7 @@ dhan_underlying:
 dhan:
   enabled: true
   kite_fallback: false        # Kite cannot serve expired contracts or the next expiry
-  output_csv: "data/nifty_options_1h_exp2.csv"
+  output_csv: "data_hourly/nifty_options_1h_exp2.csv"
   exchange_segment: "NSE_FNO"
   instrument: "OPTIDX"
   security_id: 13              # NIFTY 50
