@@ -1,0 +1,55 @@
+# =========================================================
+# DOWNLOAD CONFIG: ~5 years of the NEXT-WEEK Nifty weekly expiry (expiry_code 2), 60-minute candles (Dhan)
+#
+#   python download_data.py --config config_download_5y_60m_expiry2.yaml --only options
+#
+# Companion to config_download_5y_60m.yaml (which holds the nearest weekly, expiry_code 1). Needs
+# DHAN_ACCESS_TOKEN / DHAN_CLIENT_ID. Dhan only serves ATM-3 .. ATM+3 for expiries other than the
+# nearest, so this is 7 strikes x 2 sides = 14 series: roughly 12,000 requests, about 2 hours.
+# Saved parts are keyed WEEK2_60m in data/dhan_parts, so nothing from the expiry-1 download is touched.
+# Stop with Ctrl+C and re-run the same command to resume.
+#
+# Then build the daily file with both expiries:
+#   python download_data.py --config config_download_5y_daily.yaml --only daily_options
+#
+# If the first requests all fail, Dhan may not serve that far back for expiry 2: lower data.days.
+# =========================================================
+
+data:
+  days: 1800                   # ~4.9 years. Dhan serves "up to 5 years"; asking for the very edge (1825)
+                               #   makes the oldest requests fail, which aborts the run. Raise it only
+                               #   if your account really returns data that far back.
+  source: "dhan"               # underlying Nifty prices from Dhan's intraday charts (up to 5 years)
+  output_csv: "data/nifty_1h.csv"   # underlying prices file the strategy reads (the old one is kept once
+                               #   as data/nifty_1h_previous.csv)
+
+# Underlying Nifty prices (candles for the indicators). Index volume does not exist, so the NIFTYBEES ETF's
+# volume is used as the VWAP weight. Only ~44 requests in total: Dhan allows 90 days per request.
+dhan_underlying:
+  interval: 60                 # minutes: 1, 5, 15, 25 or 60; keep equal to dhan.interval below
+  chunk_days: 85               # days per request (Dhan's maximum is 90)
+  price:
+    security_id: 13            # NIFTY 50 index
+    exchange_segment: "IDX_I"
+    instrument: "INDEX"
+  volume:
+    security_id: 10576         # NIFTYBEES ETF (NSE)
+    exchange_segment: "NSE_EQ"
+    instrument: "EQUITY"
+
+dhan:
+  enabled: true
+  kite_fallback: false        # Kite cannot serve expired contracts or the next expiry
+  output_csv: "data/nifty_options_1h_exp2.csv"
+  exchange_segment: "NSE_FNO"
+  instrument: "OPTIDX"
+  security_id: 13              # NIFTY 50
+  expiry_flag: "WEEK"          # Nifty weekly expiries
+  expiry_code: 2               # 2 = next weekly expiry (1 = nearest)
+  interval: 60                 # hourly candles (7 bars per trading day)
+  strike_min: -3               # Dhan serves only ATM-3 ... ATM+3 for expiries other than the nearest
+  strike_max: 3
+  chunk_days: 2                # Dhan's max per request (both dates inclusive)
+  sleep_sec: 0.25              # pause between requests (rate limit)
+  progress_every: 25           # print a progress line every N requests
+

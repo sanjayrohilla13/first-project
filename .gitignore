@@ -1,0 +1,36 @@
+# Secrets / credentials
+.env
+.env.*
+*.key
+*.pem
+*.token
+secrets.*
+credentials*
+access_token*
+values.yaml
+
+# Market data and backtest output (large / proprietary)
+data/
+data_daily/
+results/
+*.csv
+*.parquet
+*.pkl
+*.feather
+
+# Private documents
+*.docx
+Direction_Score_Calculation.docx
+
+# Python
+__pycache__/
+*.py[cod]
+.venv/
+venv/
+.ipynb_checkpoints/
+
+# OS / editor
+Thumbs.db
+.DS_Store
+.vscode/
+.idea/

@@ -1,0 +1,66 @@
+# =========================================================
+# DOWNLOAD CONFIG: ~5 years of Nifty WEEKLY options, 60-minute (hourly) candles (Dhan)
+#
+#   python download_data.py --config config_download_5y_60m.yaml --only underlying   # ~44 requests, a minute or two
+#   python download_data.py --config config_download_5y_60m.yaml --only options      # the long one
+#   (or just leave off --only to do both, underlying first)
+#
+# Needs DHAN_ACCESS_TOKEN (and DHAN_CLIENT_ID) in the environment.
+#
+# It writes the same files the strategy already reads (data/nifty_options_1h.csv, parts in
+# data/dhan_parts). The strike/side files you already have (Oct 2024 - Oct 2026) are kept and
+# only the OLDER dates (and anything after the last run) are fetched, so this adds about
+# 3 years of history instead of re-downloading everything.
+#
+# If you stop it (Ctrl+C), re-run the same command to resume. To rebuild the combined CSV
+# from what is saved so far, without downloading:
+#   python download_data.py --config config_download_5y_60m.yaml --assemble
+#
+# This file only holds what the downloader reads. It is not a strategy config.
+# =========================================================
+
+data:
+  days: 1800                   # ~4.9 years. Dhan serves "up to 5 years"; asking for the very edge (1825)
+                               #   makes the oldest requests fail, which aborts the run. Raise it only
+                               #   if your account really returns data that far back.
+  source: "dhan"               # underlying Nifty prices from Dhan's intraday charts (up to 5 years)
+  output_csv: "data/nifty_1h.csv"   # underlying prices file the strategy reads (the old one is kept once
+                               #   as data/nifty_1h_previous.csv)
+
+# Underlying Nifty prices (candles for the indicators). Index volume does not exist, so the NIFTYBEES ETF's
+# volume is used as the VWAP weight. Only ~44 requests in total: Dhan allows 90 days per request.
+dhan_underlying:
+  interval: 60                 # minutes: 1, 5, 15, 25 or 60; keep equal to dhan.interval below
+  chunk_days: 85               # days per request (Dhan's maximum is 90)
+  price:
+    security_id: 13            # NIFTY 50 index
+    exchange_segment: "IDX_I"
+    instrument: "INDEX"
+  volume:
+    security_id: 10576         # NIFTYBEES ETF (NSE)
+    exchange_segment: "NSE_EQ"
+    instrument: "EQUITY"
+
+dhan:
+  enabled: true
+  output_csv: "data/nifty_options_1h.csv"
+  exchange_segment: "NSE_FNO"
+  instrument: "OPTIDX"
+  security_id: 13              # NIFTY 50
+  expiry_flag: "WEEK"          # Nifty weekly expiries
+  expiry_code: 1               # 1 = nearest weekly expiry
+  interval: 60                 # hourly candles (7 bars per trading day)
+  strike_min: -10              # ATM-10 ... ATM+10 is the widest Dhan allows for the nearest expiry
+  strike_max: 10
+  chunk_days: 2                # Dhan's max per request (both dates inclusive)
+  sleep_sec: 0.25              # pause between requests (rate limit)
+  progress_every: 25           # print a progress line every N requests
+
+# ---------------------------------------------------------
+# What to expect
+#   Requests : 42 strike/side files x ~458 missing two-day windows = ~19,200 (the log prints the exact
+#              number and an ETA before it starts)
+#   Time     : roughly 3 hours
+#   History  : from late Nov 2021 to yesterday; the final CSV will have roughly 370,000 rows
+#              (7 hourly bars a day x 42 option series)
+#

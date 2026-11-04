@@ -1,0 +1,42 @@
+# =========================================================
+# DOWNLOAD CONFIG: 5 years of DAILY Nifty candles
+#
+#   python download_data.py --config config_download_5y_daily.yaml --only daily
+#
+# Dhan source needs DHAN_ACCESS_TOKEN (and DHAN_CLIENT_ID) in the environment; yfinance needs nothing.
+# Writes to its own folder (data_daily/), so the hourly files in data/ are untouched.
+# Only the daily Nifty series is downloaded, no options. Today's candle is left out until
+# the session is over.
+#
+# This file only holds what the downloader reads. It is not a strategy config.
+# =========================================================
+
+daily:
+  years: 5                     # history length
+  source: "dhan"               # "dhan" or "yfinance" (yfinance needs no token)
+  output_csv: "data_daily/nifty_1d.csv"   # columns: datetime, open, high, low, close, volume
+  chunk_days: 365              # days per Dhan request
+  # Dhan source: the index has no volume, so NIFTYBEES volume is used as the VWAP weight
+  price:
+    security_id: 13            # NIFTY 50 index
+    exchange_segment: "IDX_I"
+    instrument: "INDEX"
+  volume:
+    security_id: 10576         # NIFTYBEES ETF (NSE)
+    exchange_segment: "NSE_EQ"
+    instrument: "EQUITY"
+  # yfinance source
+  symbol: "^NSEI"
+  volume_symbol: "NIFTYBEES.NS"
+
+# Daily weekly-expiry option candles. Dhan has no daily interval for options, so these are built
+# from the hourly options file already downloaded (nothing is requested from Dhan):
+#   python download_data.py --config config_download_5y_daily.yaml --only daily_options
+daily_options:
+  source_csv:                  # hourly options files to combine, one per expiry (a missing file stops the build)
+    - "data/nifty_options_1h.csv"        # expiry_code 1: nearest weekly (config_download_5y_60m.yaml)
+    - "data/nifty_options_1h_exp2.csv"   # expiry_code 2: next weekly (config_download_5y_60m_expiry2.yaml)
+  output_csv: "data_daily/nifty_options_1d.csv"   # same columns as the hourly options file
+  strike_step: 50              # Nifty strike spacing, to re-base strike_offset on each day's ATM
+  strike_min: -10
+  strike_max: 10

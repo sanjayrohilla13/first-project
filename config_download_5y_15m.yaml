@@ -1,0 +1,59 @@
+# =========================================================
+# DOWNLOAD CONFIG: ~5 years of Nifty WEEKLY options, 15-minute candles (Dhan)
+#
+#   python download_data.py --config config_download_5y_15m.yaml --only underlying   # ~44 requests, a minute or two
+#   python download_data.py --config config_download_5y_15m.yaml --only options      # the long one
+#   (or just leave off --only to do both, underlying first)
+#
+# Needs DHAN_ACCESS_TOKEN (and DHAN_CLIENT_ID) in the environment, like the other runs.
+# Finished strike/side pairs are saved in data/options_15m/dhan_parts, so you can stop
+# (Ctrl+C) and re-run the same command to resume. Rebuild the combined CSV from the
+# saved parts any time (no network needed) with:
+#   python download_data.py --config config_download_5y_15m.yaml --assemble
+#
+# This file only holds what the downloader reads. It is not a strategy config.
+# =========================================================
+
+data:
+  days: 1800                   # ~4.9 years. Dhan serves "up to 5 years"; going to the very edge (1825)
+                               #   makes the oldest requests fail, which aborts the run. Raise it
+                               #   only if your account really returns data that far back.
+  source: "dhan"               # underlying Nifty prices from Dhan's intraday charts (up to 5 years)
+  output_csv: "data/options_15m/nifty_15m.csv"   # its own file, so the hourly nifty_1h.csv is not touched
+
+# Underlying Nifty prices (candles for the indicators). Index volume does not exist, so the NIFTYBEES ETF's
+# volume is used as the VWAP weight. Only ~44 requests in total: Dhan allows 90 days per request.
+dhan_underlying:
+  interval: 15                 # minutes: 1, 5, 15, 25 or 60; keep equal to dhan.interval below
+  chunk_days: 85               # days per request (Dhan's maximum is 90)
+  price:
+    security_id: 13            # NIFTY 50 index
+    exchange_segment: "IDX_I"
+    instrument: "INDEX"
+  volume:
+    security_id: 10576         # NIFTYBEES ETF (NSE)
+    exchange_segment: "NSE_EQ"
+    instrument: "EQUITY"
+
+dhan:
+  enabled: true
+  output_csv: "data/options_15m/nifty_options_15m.csv"   # its own folder, so nothing mixes with the hourly files
+  exchange_segment: "NSE_FNO"
+  instrument: "OPTIDX"
+  security_id: 13              # NIFTY 50
+  expiry_flag: "WEEK"          # Nifty weekly expiries
+  expiry_code: 1               # 1 = nearest weekly expiry
+  interval: 15                 # 15-minute candles (25 bars per trading day)
+  strike_min: -10              # ATM-10 ... ATM+10 is the widest Dhan allows for the nearest expiry
+  strike_max: 10
+  chunk_days: 2                # Dhan's max per request (both dates inclusive)
+  sleep_sec: 0.25              # pause between requests (rate limit)
+  progress_every: 25           # print a progress line every N requests
+
+# ---------------------------------------------------------
+# What to expect
+#   Requests : 21 strikes x 2 sides x 771 two-day windows = ~32,400
+#   Time     : roughly 5 hours (the script prints an ETA once it is running)
+#   History  : starts around late Nov 2021 and runs to yesterday
+#   Size     : ~1.3 million rows, about 150 MB for the final CSV (25 bars/day vs 7 for hourly)
+#
