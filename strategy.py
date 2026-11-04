@@ -444,6 +444,12 @@ def build_signals(df: pd.DataFrame, cfg: dict) -> pd.DataFrame:
                                 & (df["adx"] <= ind["adx"]["threshold"]))
         if dc.get("on_conflict", "neutral") == "skip":  # CMO and OI disagree -> stand aside
             df["neutral_signal"] &= ~disagree
+    elif dc.get("logic") == "oi":  # open interest only: put-vs-call OI flow decides the direction
+        if not (oi_cfg["required"] and "put_doi" in df.columns):
+            raise ValueError('direction.logic "oi" needs indicators.oi.required: true and an options file')
+        df["score"] = df["oi_bias"]
+        df["long_signal"], df["short_signal"] = oi_long, oi_short
+        df["neutral_signal"] = ~df["long_signal"] & ~df["short_signal"]
     elif dc.get("logic") == "contrarian":  # replaces the trend-following signals above
         df["score"] = contrarian_score(df, dc)
         thr = dc["threshold"]
