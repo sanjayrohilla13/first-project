@@ -8,6 +8,7 @@ One command to top up every dataset the strategies read (hourly and daily).
     python update_data.py --futures          # also top up Nifty futures from Kite (run --login first)
     python update_data.py --only minute      # 1-minute index + options into data_minute/ (add --futures for futures)
     python update_data.py --minute           # everything above plus the 1-minute files
+    python update_data.py --backfill-months 6   # 1-minute files: also fetch 6 months OLDER than what is saved
     python update_data.py --dry-run          # just print the steps
 
 Each step calls download_data.py with the matching download config; the downloader resumes from
@@ -19,10 +20,12 @@ options they are built from failed.
 from __future__ import annotations
 
 import argparse
+import csv
 import os
 import subprocess
 import sys
 import time
+from datetime import date, datetime, timedelta
 from pathlib import Path
 
 HERE = Path(__file__).resolve().parent
@@ -48,6 +51,30 @@ STEPS = [
 ]
 
 
+MINUTE_INDEX = HERE / "data_minute" / "nifty_1m.csv"
+
+
+def _months_back(d: date, months: int) -> date:
+    y, m = divmod(d.year * 12 + d.month - 1 - months, 12)
+    m += 1
+    last = [31, 29 if y % 4 == 0 and (y % 100 or y % 400 == 0) else 28, 31, 30, 31, 30, 31, 31, 30, 31, 30, 31][m - 1]
+    return date(y, m, min(d.day, last))
+
+
+def backfill_days(months: int) -> tuple[int, date, date]:
+    """History length (days back from today) that reaches `months` months before the oldest saved minute bar.
+    Returns (days, oldest_saved, new_start)."""
+    if not MINUTE_INDEX.exists():
+        raise SystemExit(f"{MINUTE_INDEX} not found: download the minute data first (--only minute).")
+    with open(MINUTE_INDEX, newline="") as f:
+        r = csv.reader(f)
+        next(r)
+        first = next(r)[0]
+    oldest = datetime.fromisoformat(first).date()
+    start = _months_back(oldest, months)
+    return (date.today() - start).days + 1, oldest, start
+
+
 def main() -> int:
     p = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     p.add_argument("--only", choices=["hourly", "daily", "minute"], help="Update just one time frame")
@@ -56,8 +83,20 @@ def main() -> int:
     p.add_argument("--futures", action="store_true", help="Also update the Kite futures files (needs a Kite login)")
     p.add_argument("--minute", action="store_true",
                    help="Also update the 1-minute files (index, options; futures with --futures). Heavy, so off by default")
+    p.add_argument("--backfill-months", type=int, metavar="N",
+                   help="Minute files only: extend the history N months further back than the oldest bar saved in "
+                        "data_minute/ (implies --only minute unless another selection is given)")
     p.add_argument("--dry-run", action="store_true", help="Print the steps without running them")
     a = p.parse_args()
+
+    days = None
+    if a.backfill_months:
+        a.minute = True
+        if not a.only:
+            a.only = "minute"
+        days, oldest, new_start = backfill_days(a.backfill_months)
+        print(f"Backfill: oldest saved minute bar {oldest}; fetching back to {new_start} "
+              f"({a.backfill_months} months earlier) = --days {days}\n")
 
     steps = []
     for key, group, cfg, only, label, deps in STEPS:
@@ -73,16 +112,18 @@ def main() -> int:
             continue
         if a.skip_expiry2 and key in ("h_opt2", "d_opt"):
             continue
-        steps.append((key, cfg, only, label, deps))
+        steps.append((key, cfg, only, label, deps, group))
 
     if not a.dry_run and not os.environ.get("DHAN_ACCESS_TOKEN"):
         print("Warning: DHAN_ACCESS_TOKEN is not set in this terminal; Dhan steps will fail "
               "(or fall back to Kite where the config allows).\n")
 
     results: dict[str, str] = {}
-    for key, cfg, only, label, deps in steps:
-        cmd = [sys.executable, DL, "--config", str(HERE / "configurations" / cfg), "--only", only]
-        print(f"\n=== {label} ===\n$ python download_data.py --config configurations/{cfg} --only {only}", flush=True)
+    for key, cfg, only, label, deps, group in steps:
+        extra = ["--days", str(days)] if days and group.startswith("minute") else []
+        cmd = [sys.executable, DL, "--config", str(HERE / "configurations" / cfg), "--only", only, *extra]
+        print(f"\n=== {label} ===\n$ python download_data.py --config configurations/{cfg} --only {only}"
+              + (f" --days {days}" if extra else ""), flush=True)
         if a.dry_run:
             continue
         bad = [d for d in deps if results.get(d) == "FAILED"]
@@ -98,7 +139,7 @@ def main() -> int:
     if a.dry_run:
         return 0
     print("\n=== Summary ===")
-    for key, cfg, only, label, deps in steps:
+    for key, cfg, only, label, deps, group in steps:
         print(f"  {results[key]:8} {label}")
     return 0 if all(v == "ok" for v in results.values()) else 1
 

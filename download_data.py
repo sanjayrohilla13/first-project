@@ -1048,9 +1048,13 @@ def resolve_config(path: str) -> str:
     return str(p) if p.exists() else str(CONFIG_DIR / p.name)
 
 
-def main(config_path: str, only: str | None = None) -> None:
+def main(config_path: str, only: str | None = None, days: int | None = None) -> None:
     with open(config_path) as f:
         cfg = yaml.safe_load(f)
+    if days:  # --days overrides the history length (counted back from today) for every dataset in the run
+        cfg["data"]["days"] = int(days)
+        if "futures" in cfg:
+            cfg["futures"]["days"] = int(days)
 
     if only == "daily":
         save_daily(cfg)
@@ -1113,6 +1117,9 @@ if __name__ == "__main__":
     p.add_argument("--only", choices=["underlying", "options", "futures", "daily", "daily_options"],
                    help="Download just one dataset (futures = Kite futures into the config's futures section; daily = daily Nifty candles; daily_options = daily "
                         "option candles built from the hourly options file; see the daily config sections)")
+    p.add_argument("--days", type=int,
+                   help="Override data.days (history length counted back from today); used to backfill older data. "
+                        "Only the missing older days are fetched, what is already saved is kept")
     p.add_argument("--assemble", action="store_true",
                    help="Build the options CSV from saved dhan_parts (no download)")
     p.add_argument("--probe", action="store_true",
@@ -1126,4 +1133,4 @@ if __name__ == "__main__":
     elif a.probe:
         probe_dhan(yaml.safe_load(open(a.config, encoding="utf8")))
     else:
-        main(a.config, a.only)
+        main(a.config, a.only, a.days)

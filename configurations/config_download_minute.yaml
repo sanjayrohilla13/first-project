@@ -23,7 +23,7 @@
 # =========================================================
 
 data:
-  days: 90                     # history to keep up to date; raise it to extend further back
+  days: 180                    # history to keep up to date (was 90); raise it to extend further back
   source: "dhan"               # index prices from Dhan's intraday charts
   output_csv: "data_minute/nifty_1m.csv"
   merge_existing: true         # keep minutes saved by earlier runs; new downloads win on overlap
@@ -59,7 +59,7 @@ dhan:
 # Futures: Kite continuous contract, 1-minute, with volume and open interest.
 # --only futures overlays this section on `data` and forces source "zerodha".
 futures:
-  days: 90
+  days: 180
   output_csv: "data_minute/nifty_fut_1m.csv"
 
 zerodha:
