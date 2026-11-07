@@ -405,7 +405,6 @@ def build_signals(df: pd.DataFrame, cfg: dict) -> pd.DataFrame:
     if "iv_atm" in df.columns:
         n_iv = cfg["spread"].get("iv_lookback", 49)
         df["iv_ratio"] = df["iv_atm"] / df["iv_atm"].rolling(n_iv, min_periods=min(10, n_iv)).mean()
-
     # logic "trend": every indicator in direction.trend_use must agree
     use = (cfg.get("direction") or {}).get("trend_use") or ["vwap", "adx", "di", "rsi", "oi"]
     adx_ok = df["adx"] > ind["adx"]["threshold"]
@@ -798,6 +797,12 @@ def backtest_spread(df: pd.DataFrame, cfg: dict, idx: dict):
                                       else p_close), "TP"
                 elif _last_bar_of_expiry(position, df, i):
                     exit_p, reason = p_close, "Expiry"  # settles with the contract
+                elif (d and sp.get("exit_on_trend_change")
+                      and (prev["short_signal"] if d == 1 else prev["long_signal"])
+                      and position["last_p"] < position["p0"] * (1 - sp.get("trend_exit_min_gain_pct", -1e9) / 100)):
+                    # the PREVIOUS bar's signal turned against the trade: exit at this bar's open
+                    # (optionally only when the trade is already at least trend_exit_min_gain_pct in profit)
+                    exit_p, reason = p_open, "TrendChange"
                 elif d and risk["trailing"] == "supertrend" and row["st_dir"] == -d:
                     exit_p, reason = p_close, "ST"
                 elif d and row["adx"] < cfg["indicators"]["adx"]["chop_threshold"]:
@@ -826,7 +831,7 @@ def backtest_spread(df: pd.DataFrame, cfg: dict, idx: dict):
                 equity += pnl
                 # per-leg prices: bar open for exits taken at the open, else the bar close
                 # (SL/TP are priced on the whole structure, so their leg prices are approximate)
-                at_open = reason in ("TrendStart", "VolSurge") and not missing
+                at_open = reason in ("TrendStart", "VolSurge", "TrendChange") and not missing
                 legs_txt = " | ".join(
                     f"{'SELL' if lg['short'] else 'BUY'} {lg['strike']:.0f}{lg['type']} "
                     f"{lg['entry']:.2f}->{(lg.get('bar_open', lg['last']) if at_open else lg['last']):.2f}"

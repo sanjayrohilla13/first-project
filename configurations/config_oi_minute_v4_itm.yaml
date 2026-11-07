@@ -138,7 +138,7 @@ spread:
   hedge_min_premium: 1         # ...and at least this (avoids untradable Rs 0.05 strikes)
   min_credit: 0                # skip entries collecting less than this net credit (Rs)
   sl_pct: 100                  # stop: cost to close rises 100% of the entry credit (loss = credit)
-  tp_pct: 20                   # target: it falls 20% of the entry credit
+  tp_pct: 40                   # target: it falls 40% of the entry credit
   intrabar: "conservative"     # how bar highs/lows trigger exits: "extreme" (optimistic), "conservative"
                                #   (stops use the worst case, targets only count at the close), or "close"
   entry_window: ["09:15", "11:55"]   # morning entries only: later entries were consistently worse
